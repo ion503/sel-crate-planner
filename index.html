@@ -40,7 +40,7 @@
             <h1>SEL Crate Planner</h1>
             <p>
                 This tool allocates PCB trays into <strong>crates</strong>.<br>
-                Default crate capacity: <strong>2 columns × 24 rows = 48 trays</strong>.
+                Crate capacity is fixed at <strong>2 columns × 24 rows = 48 trays</strong>.
             </p>
         </div>
     </div>
@@ -50,17 +50,9 @@
             <label for="trayEmptyLbs">Empty tray weight (lbs):</label>
             <input id="trayEmptyLbs" type="number" step="0.01" min="0" value="8.00">
         </div>
-        <div>
-            <label for="slotsPerCrate">Slots per crate (default 48 = 2×24):</label>
-            <input id="slotsPerCrate" type="number" value="48" min="1" step="1">
-        </div>
-        <div>
-            <label for="columnsInput">Columns per crate:</label>
-            <input id="columnsInput" type="number" value="2" min="1" step="1">
-        </div>
+        <!-- slots/columns inputs removed because they are fixed -->
     </div>
 </div>
-
 
 <div class="panel">
     <h2>1) Tray Specs (from Specs CSV file)</h2>
@@ -115,6 +107,10 @@ C,40</textarea>
     let currentTrays = [];
     let currentColorMap = {};
 
+    const FIXED_SLOTS_PER_CRATE = 48;
+    const FIXED_COLUMNS = 2;
+    const FIXED_ROWS_PER_COL = 24;
+
     // Nice distinct palette; extend if you expect many PCB types
     const PALETTE = [
         "#e0f5c5", "#cbe2ff", "#ffe0b3", "#ffcdd2", "#d1c4e9",
@@ -123,10 +119,8 @@ C,40</textarea>
     ];
 
     function colorFor(key){
-        // Deterministic fallback if more types than palette
         let h = 0;
         for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
-        // Simple HSL generator
         const hue = h % 360;
         return `hsl(${hue} 70% 85%)`;
     }
@@ -208,7 +202,6 @@ C,40</textarea>
             crates.push({ id:i+1, trays:[], totalWeightLbs:0 });
         }
 
-        // First-Fit Decreasing into lightest crate with space
         for(const tray of trays){
             let bestIndex=-1, bestWeight=Infinity;
             for(let i=0;i<crates.length;i++){
@@ -229,8 +222,8 @@ C,40</textarea>
             const maxSlots = Math.min(slotsPerCrate, rowsPerCol*columns);
             for(let i=0;i<maxSlots;i++){
                 const tray = crate.trays[i] || null;
-                const rowIndex = Math.floor(i / columns); // 0 bottom
-                const colIndex = i % columns;             // 0 left, 1 right
+                const rowIndex = Math.floor(i / columns);
+                const colIndex = i % columns;
                 crate.positions.push({ row:rowIndex, col:colIndex, tray });
             }
         });
@@ -238,7 +231,6 @@ C,40</textarea>
     }
 
     function ensureLegend(containerEl, colorMap){
-        // Build/rebuild a compact legend above the grids
         let legend = document.getElementById("typeLegend");
         if(!legend){
             legend = document.createElement("div");
@@ -302,7 +294,6 @@ C,40</textarea>
                 const slot = slotMatrix.find(s => s.row===pos.row && s.col===pos.col);
                 if(!slot) return;
                 const t = pos.tray;
-                // Set background via color map instead of CSS class
                 slot.div.className = "slot";
                 slot.div.style.background = colorMap[t.type] || "#fff";
                 slot.div.textContent =
@@ -366,12 +357,11 @@ C,40</textarea>
 
                 doc.text(slot, L, y);
                 doc.text(String(t.id), L+18, y);
+
                 const typeX = L + 45;
                 const maxTypeWidth = 55;
                 const typeLines = doc.splitTextToSize(String(t.type), maxTypeWidth);
-
                 doc.text(typeLines, typeX, y);
-
                 const extraHeight = (typeLines.length - 1) * 4;
 
                 doc.text(String(t.unitsLoaded), L + 110, y);
@@ -425,8 +415,6 @@ C,40</textarea>
     const specsInput = document.getElementById("specsInput");
     const ordersInput = document.getElementById("ordersInput");
     const trayEmptyLbsInput = document.getElementById("trayEmptyLbs");
-    const slotsInput = document.getElementById("slotsPerCrate");
-    const colsInput = document.getElementById("columnsInput");
     const planBtn = document.getElementById("planBtn");
     const summaryDiv = document.getElementById("summary");
     const crateDiv = document.getElementById("crateContainer");
@@ -441,13 +429,12 @@ C,40</textarea>
             const specs = parseSpecs(specsInput.value);
             const orders = parseOrders(ordersInput.value);
 
-            // Build color map *based on orders* (so only ordered types get colors)
             currentColorMap = buildColorMap(orders);
 
             const trayEmptyLbs = Math.max(0, Number(trayEmptyLbsInput.value) || 0);
-            const slotsPerCrate = Math.max(1, Number(slotsInput.value) || 48);
-            const columns = Math.max(1, Number(colsInput.value) || 2);
-            const rowsPerCol = Math.ceil(slotsPerCrate / columns);
+            const slotsPerCrate = FIXED_SLOTS_PER_CRATE;
+            const columns = FIXED_COLUMNS;
+            const rowsPerCol = FIXED_ROWS_PER_COL;
 
             const trays = computeTrays(orders, specs, trayEmptyLbs);
             const crates = allocateToCrates(trays, slotsPerCrate, columns, rowsPerCol);
@@ -477,7 +464,6 @@ C,40</textarea>
     downloadPdfBtn.addEventListener("click", ()=> buildManifestPdf(currentCrates, currentTrays));
 })();
 </script>
-
 
 </body>
 </html>
