@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SEL Crate Planner</title>
+<style>
+    body { font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; margin:0; padding:16px; background:#f5f5f5; }
+    h1,h2,h3 { margin:0 0 8px 0; }
+    .panel { background:#fff; border-radius:8px; padding:12px 16px; margin-bottom:16px; box-shadow:0 1px 3px rgba(0,0,0,.1); }
+    label { font-weight:600; display:block; margin-bottom:4px; }
+    textarea,input { width:100%; box-sizing:border-box; font-family:inherit; font-size:13px; padding:6px; margin-bottom:8px; }
+    textarea { min-height:80px; resize:vertical; }
+    button { padding:6px 14px; border-radius:4px; border:1px solid #0078d4; background:#0078d4; color:#fff; font-size:13px; cursor:pointer; margin-right:8px; }
+    button:hover { background:#005fa3; }
+    .summary { font-size:14px; line-height:1.5; }
+    .crate-container { display:flex; flex-wrap:wrap; gap:16px; }
+    .crate-card { background:#fff; border-radius:8px; padding:8px 10px 12px 10px; box-shadow:0 1px 3px rgba(0,0,0,.1); width:320px; }
+    .crate-header { font-weight:600; margin-bottom:8px; font-size:14px; }
+    .crate-grid { display:grid; grid-template-columns:1fr 1fr; gap:4px; border:1px solid #aaa; padding:4px; background:#f8f8f8; }
+    .slot { height:24px; font-size:11px; border-radius:3px; padding:3px 4px; box-sizing:border-box; display:flex; align-items:center; justify-content:center; text-align:center; border:1px solid #ccc; background:#fff; }
+    .slot.empty { background:#eee; color:#999; border-style:dashed; }
+    .slot.A { background:#e0f5c5; } .slot.B { background:#cbe2ff; } .slot.C { background:#ffe0b3; } .slot.D { background:#ffcdd2; }
+    .legend { font-size:12px; color:#555; }
+    code { font-family:Consolas,"Courier New",monospace; background:#eee; padding:1px 4px; border-radius:3px; }
+    .buttons-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:4px; }
+    .inline { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    .inline > div { min-width:220px; }
+    .header-row { display: flex; align-items: center; gap: 12px; }
+    .logo { height: 40px; width: auto; }
+</style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+
+<div class="panel">
+    <div class="header-row">
+        <img src="sel_logo.png" alt="SEL Logo" class="logo">
+        <div>
+            <h1>SEL Crate Planner</h1>
+            <p>
+                This tool allocates PCB trays into <strong>crates</strong>.<br>
+                Default crate capacity: <strong>2 columns × 24 rows = 48 trays</strong>.
+            </p>
+        </div>
+    </div>
+
+    <div class="inline">
+        <div>
+            <label for="trayEmptyLbs">Empty tray weight (lbs):</label>
+            <input id="trayEmptyLbs" type="number" step="0.01" min="0" value="8.00">
+        </div>
+        <div>
+            <label for="slotsPerCrate">Slots per crate (default 48 = 2×24):</label>
+            <input id="slotsPerCrate" type="number" value="48" min="1" step="1">
+        </div>
+        <div>
+            <label for="columnsInput">Columns per crate:</label>
+            <input id="columnsInput" type="number" value="2" min="1" step="1">
+        </div>
+    </div>
+</div>
+
+
+<div class="panel">
+    <h2>1) Tray Specs (from Specs CSV file)</h2>
+    <p class="legend">
+        CSV format (first row headers): <code>PCB_Type,UnitsPerTray,PCBWeightLbs</code><br>
+        One tray type per line. (Tray empty weight is a single value above for all types.)
+    </p>
+    <textarea id="specsInput">A,10,0.22
+B,6,0.40
+C,2,0.90
+D,8,0.30</textarea>
+    <div class="buttons-row">
+        <button id="importSpecsBtn" type="button">Import Specs CSV</button>
+        <input id="specsFileInput" type="file" accept=".csv" style="display:none">
+    </div>
+</div>
+
+<div class="panel">
+    <h2>2) Daily Orders (from Orders CSV file)</h2>
+    <p class="legend">
+        CSV format (first row headers): <code>PCB_Type,Quantity</code>
+    </p>
+    <textarea id="ordersInput">A,270
+B,120
+C,40</textarea>
+
+    <div class="buttons-row">
+        <button id="planBtn">Plan Crates</button>
+        <button id="importOrdersBtn" type="button">Import Orders CSV</button>
+        <input id="ordersFileInput" type="file" accept=".csv" style="display:none">
+        <button id="downloadPdfBtn" type="button">Download Manifest (PDF)</button>
+    </div>
+</div>
+
+<div class="panel">
+    <h2>3) Summary</h2>
+    <div id="summary" class="summary">Enter specs and orders, then click <strong>Plan Crates</strong>.</div>
+</div>
+
+<div class="panel">
+    <h2>4) Crate Layouts</h2>
+    <p class="legend">
+        Each card shows one crate. Slots are arranged as <span id="geomLabel">2 columns × 24 rows</span>.<br>
+        <strong>Row 1 (bottom)</strong> holds the heaviest trays; upper rows are lighter.
+    </p>
+    <div id="crateContainer" class="crate-container"></div>
+</div>
+
+<script>
+(function(){
+    let currentCrates = [];
+    let currentTrays = [];
+    let currentColorMap = {};
+
+    // Nice distinct palette; extend if you expect many PCB types
+    const PALETTE = [
+        "#e0f5c5", "#cbe2ff", "#ffe0b3", "#ffcdd2", "#d1c4e9",
+        "#b2dfdb", "#f8bbd0", "#c8e6c9", "#bbdefb", "#fff9c4",
+        "#ffccbc", "#d7ccc8", "#f0f4c3", "#b3e5fc", "#e1bee7"
+    ];
+
+    function colorFor(key){
+        // Deterministic fallback if more types than palette
+        let h = 0;
+        for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+        // Simple HSL generator
+        const hue = h % 360;
+        return `hsl(${hue} 70% 85%)`;
+    }
+
+    function buildColorMap(orders){
+        const typesInOrder = Object.keys(orders);
+        const map = {};
+        typesInOrder.forEach((t, i) => {
+            map[t] = PALETTE[i] || colorFor(t);
+        });
+        return map;
+    }
+
+    function parseCsvToRows(text){
+        const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l.length>0);
+        return lines.map(line => line.split(",").map(x => x.trim()));
+    }
+
+    function parseSpecs(text){
+        const specs = {};
+        const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l.length>0);
+        for(const line of lines){
+            const p = line.split(/[,;\t]/).map(x=>x.trim());
+            if(p.length < 3) continue;
+            const [type, unitsStr, pcbLbsStr] = p;
+            specs[type] = { type, unitsPerTray: Number(unitsStr), pcbLbs: Number(pcbLbsStr) };
+        }
+        return specs;
+    }
+
+    function parseOrders(text){
+        const orders = {};
+        const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l.length>0);
+        for(const line of lines){
+            const p = line.split(/[,;\t]/).map(x=>x.trim());
+            if(p.length < 2) continue;
+            const [type, qtyStr] = p;
+            const qty = Number(qtyStr);
+            if(!orders[type]) orders[type] = 0;
+            orders[type] += qty;
+        }
+        return orders;
+    }
+
+    function computeTrays(orders, specs, trayEmptyLbs){
+        const trays = [];
+        let nextId = 1;
+        for(const type in orders){
+            if(!specs[type]) throw new Error("No spec defined for PCB type '"+type+"'");
+            const spec = specs[type];
+            const qty = orders[type];
+            const upt = spec.unitsPerTray;
+            if(upt <= 0) throw new Error("UnitsPerTray must be > 0 for type '"+type+"'");
+
+            const full = Math.floor(qty / upt);
+            const rem  = qty % upt;
+
+            for(let i=0; i<full; i++){
+                const units = upt;
+                const weight = trayEmptyLbs + units * spec.pcbLbs;
+                trays.push({ id: nextId++, type, unitsLoaded: units, weightLbs: weight });
+            }
+            if(rem > 0){
+                const units = rem;
+                const weight = trayEmptyLbs + units * spec.pcbLbs;
+                trays.push({ id: nextId++, type, unitsLoaded: units, weightLbs: weight });
+            }
+        }
+        return trays;
+    }
+
+    function allocateToCrates(trays, slotsPerCrate, columns, rowsPerCol){
+        if(trays.length === 0) return [];
+        trays = [...trays].sort((a,b)=> b.weightLbs - a.weightLbs);
+
+        const numCrates = Math.ceil(trays.length / slotsPerCrate);
+        const crates = [];
+        for(let i=0;i<numCrates;i++){
+            crates.push({ id:i+1, trays:[], totalWeightLbs:0 });
+        }
+
+        // First-Fit Decreasing into lightest crate with space
+        for(const tray of trays){
+            let bestIndex=-1, bestWeight=Infinity;
+            for(let i=0;i<crates.length;i++){
+                const c = crates[i];
+                if(c.trays.length < slotsPerCrate && c.totalWeightLbs < bestWeight){
+                    bestWeight = c.totalWeightLbs;
+                    bestIndex = i;
+                }
+            }
+            if(bestIndex === -1) throw new Error("No crate with free slots found; capacity miscalc.");
+            crates[bestIndex].trays.push(tray);
+            crates[bestIndex].totalWeightLbs += tray.weightLbs;
+        }
+
+        crates.forEach(crate=>{
+            crate.trays.sort((a,b)=> b.weightLbs - a.weightLbs);
+            crate.positions = [];
+            const maxSlots = Math.min(slotsPerCrate, rowsPerCol*columns);
+            for(let i=0;i<maxSlots;i++){
+                const tray = crate.trays[i] || null;
+                const rowIndex = Math.floor(i / columns); // 0 bottom
+                const colIndex = i % columns;             // 0 left, 1 right
+                crate.positions.push({ row:rowIndex, col:colIndex, tray });
+            }
+        });
+        return crates;
+    }
+
+    function ensureLegend(containerEl, colorMap){
+        // Build/rebuild a compact legend above the grids
+        let legend = document.getElementById("typeLegend");
+        if(!legend){
+            legend = document.createElement("div");
+            legend.id = "typeLegend";
+            legend.style.margin = "6px 0 10px 0";
+            legend.style.fontSize = "12px";
+            containerEl.parentElement.insertBefore(legend, containerEl);
+        }
+        legend.innerHTML = "<strong>Legend:</strong> " + Object.entries(colorMap).map(([t, col])=>{
+            return `<span style="display:inline-block;margin-right:10px;">
+                        <span style="display:inline-block;width:12px;height:12px;border:1px solid #999;background:${col};vertical-align:-2px;margin-right:4px;"></span>${t}
+                    </span>`;
+        }).join("");
+    }
+
+    function render(crates, trays, summaryEl, containerEl, columns, rowsPerCol, colorMap){
+        document.getElementById("geomLabel").textContent = `${columns} columns × ${rowsPerCol} rows`;
+
+        if(trays.length === 0){
+            summaryEl.innerHTML = "No trays created from the current orders.";
+        } else {
+            const totalWeight = trays.reduce((s,t)=> s + t.weightLbs, 0);
+            summaryEl.innerHTML =
+                `<strong>Total trays:</strong> ${trays.length}<br>`+
+                `<strong>Total crates required:</strong> ${crates.length}<br>`+
+                `<strong>Total weight:</strong> ${totalWeight.toFixed(2)} lbs`;
+        }
+
+        containerEl.innerHTML = "";
+        if(crates.length === 0) return;
+
+        ensureLegend(containerEl, colorMap);
+
+        crates.sort((a,b)=> b.totalWeightLbs - a.totalWeightLbs)
+        .forEach(crate=>{
+            const card = document.createElement("div");
+            card.className = "crate-card";
+
+            const header = document.createElement("div");
+            header.className = "crate-header";
+            header.textContent = `Crate ${crate.id} — total ${crate.totalWeightLbs.toFixed(2)} lbs`;
+            card.appendChild(header);
+
+            const grid = document.createElement("div");
+            grid.className = "crate-grid";
+            grid.style.gridTemplateRows = `repeat(${rowsPerCol}, 1fr)`;
+
+            const slotMatrix = [];
+            for(let r=rowsPerCol-1; r>=0; r--){
+                for(let c=0; c<columns; c++){
+                    const slotDiv = document.createElement("div");
+                    slotDiv.className = "slot empty";
+                    slotDiv.textContent = "-";
+                    grid.appendChild(slotDiv);
+                    slotMatrix.push({ row:r, col:c, div:slotDiv });
+                }
+            }
+
+            crate.positions.forEach(pos=>{
+                if(!pos.tray) return;
+                const slot = slotMatrix.find(s => s.row===pos.row && s.col===pos.col);
+                if(!slot) return;
+                const t = pos.tray;
+                // Set background via color map instead of CSS class
+                slot.div.className = "slot";
+                slot.div.style.background = colorMap[t.type] || "#fff";
+                slot.div.textContent =
+                    `R${pos.row+1}-C${pos.col+1}: `+
+                    `T#${t.id} ${t.type} (${t.unitsLoaded}u, ${t.weightLbs.toFixed(2)}lbs)`;
+            });
+
+            card.appendChild(grid);
+            containerEl.appendChild(card);
+        });
+    }
+
+    function buildManifestPdf(crates, trays){
+        if(!crates.length || !trays.length){
+            alert("No manifest to download. Please run 'Plan Crates' first.");
+            return;
+        }
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+
+        const pageW = doc.internal.pageSize.getWidth();
+        const pageH = doc.internal.pageSize.getHeight();
+        const L = 10, R = pageW - 10;
+        const box = 4;
+        let y = 12;
+
+        const totalWeight = trays.reduce((s,t)=> s + t.weightLbs, 0);
+
+        doc.setFont("helvetica","bold"); doc.setFontSize(14);
+        doc.text("SEL Crate Planner - Loading Manifest", L, y); y += 6;
+
+        doc.setFont("helvetica","normal"); doc.setFontSize(10);
+        doc.text(`Total crates: ${crates.length}`, L, y); y += 4;
+        doc.text(`Total trays: ${trays.length}`, L, y); y += 4;
+        doc.text(`Total weight: ${totalWeight.toFixed(2)} lbs`, L, y); y += 8;
+
+        const sorted = [...crates].sort((a,b)=> b.totalWeightLbs - a.totalWeightLbs);
+        sorted.forEach(crate=>{
+            if(y > pageH - 20){ doc.addPage(); y = 12; }
+
+            doc.setFont("helvetica","bold");
+            doc.text(`Crate ${crate.id}  (Total ${crate.totalWeightLbs.toFixed(2)} lbs)`, L, y); y += 5;
+            doc.setFont("helvetica","normal"); doc.setFontSize(9);
+
+            doc.text("Slot", L, y);
+            doc.text("Tray #", L+18, y);
+            doc.text("Type", L+45, y);
+            doc.text("Units", L+110, y);
+            doc.text("Weight (lbs)", L+135, y);
+            doc.text("Done", R-12, y);
+            y += 3; doc.line(L, y, R, y); y += 3;
+
+            const filled = crate.positions
+                .filter(p=>p.tray)
+                .sort((a,b)=> (a.row-b.row) || (a.col-b.col));
+
+            filled.forEach(pos=>{
+                if(y > pageH - 15){ doc.addPage(); y = 12; }
+                const t = pos.tray;
+                const slot = `R${pos.row+1}C${pos.col+1}`;
+
+                doc.text(slot, L, y);
+                doc.text(String(t.id), L+18, y);
+                const typeX = L + 45;
+                const maxTypeWidth = 55;
+                const typeLines = doc.splitTextToSize(String(t.type), maxTypeWidth);
+
+                doc.text(typeLines, typeX, y);
+
+                const extraHeight = (typeLines.length - 1) * 4;
+
+                doc.text(String(t.unitsLoaded), L + 110, y);
+                doc.text(t.weightLbs.toFixed(2), L + 135, y);
+
+                const x = R - box - 2;
+                const yy = y - box + 1;
+                doc.rect(x, yy, box, box);
+
+                y += 5 + extraHeight;
+            });
+            y += 4;
+        });
+
+        doc.save("crate_manifest.pdf");
+    }
+
+    // CSV importers
+    function importSpecsFromCsv(file, textarea){
+        const r = new FileReader();
+        r.onload = e=>{
+            try{
+                const rows = parseCsvToRows(e.target.result);
+                const data = rows.slice(1).filter(r=>r[0]);
+                const lines = data.map(r => [ r[0], r[1], r[2] ].join(",")).join("\n");
+                if(!lines) throw new Error("Specs CSV empty or missing data.");
+                textarea.value = lines;
+                alert("Specs imported. Review, then Plan Crates.");
+            }catch(err){ alert("Failed to import Specs CSV: "+err.message); console.error(err); }
+        };
+        r.onerror = e=>{ alert("Error reading Specs CSV."); console.error(e); };
+        r.readAsText(file);
+    }
+    function importOrdersFromCsv(file, textarea){
+        const r = new FileReader();
+        r.onload = e=>{
+            try{
+                const rows = parseCsvToRows(e.target.result);
+                const data = rows.slice(1).filter(r=>r[0]);
+                const lines = data.map(r => [ r[0], r[1] ].join(",")).join("\n");
+                if(!lines) throw new Error("Orders CSV empty or missing data.");
+                textarea.value = lines;
+                alert("Orders imported. Review, then Plan Crates.");
+            }catch(err){ alert("Failed to import Orders CSV: "+err.message); console.error(err); }
+        };
+        r.onerror = e=>{ alert("Error reading Orders CSV."); console.error(e); };
+        r.readAsText(file);
+    }
+
+    // Wire up UI
+    const specsInput = document.getElementById("specsInput");
+    const ordersInput = document.getElementById("ordersInput");
+    const trayEmptyLbsInput = document.getElementById("trayEmptyLbs");
+    const slotsInput = document.getElementById("slotsPerCrate");
+    const colsInput = document.getElementById("columnsInput");
+    const planBtn = document.getElementById("planBtn");
+    const summaryDiv = document.getElementById("summary");
+    const crateDiv = document.getElementById("crateContainer");
+    const importSpecsBtn = document.getElementById("importSpecsBtn");
+    const specsFileInput = document.getElementById("specsFileInput");
+    const importOrdersBtn = document.getElementById("importOrdersBtn");
+    const ordersFileInput = document.getElementById("ordersFileInput");
+    const downloadPdfBtn = document.getElementById("downloadPdfBtn");
+
+    planBtn.addEventListener("click", ()=>{
+        try{
+            const specs = parseSpecs(specsInput.value);
+            const orders = parseOrders(ordersInput.value);
+
+            // Build color map *based on orders* (so only ordered types get colors)
+            currentColorMap = buildColorMap(orders);
+
+            const trayEmptyLbs = Math.max(0, Number(trayEmptyLbsInput.value) || 0);
+            const slotsPerCrate = Math.max(1, Number(slotsInput.value) || 48);
+            const columns = Math.max(1, Number(colsInput.value) || 2);
+            const rowsPerCol = Math.ceil(slotsPerCrate / columns);
+
+            const trays = computeTrays(orders, specs, trayEmptyLbs);
+            const crates = allocateToCrates(trays, slotsPerCrate, columns, rowsPerCol);
+
+            currentTrays = trays;
+            currentCrates = crates;
+
+            render(crates, trays, summaryDiv, crateDiv, columns, rowsPerCol, currentColorMap);
+        }catch(err){
+            alert("Error: " + err.message);
+            console.error(err);
+        }
+    });
+
+    importSpecsBtn.addEventListener("click", ()=> specsFileInput.click());
+    specsFileInput.addEventListener("change", e=>{
+        const file = e.target.files[0]; if(!file) return;
+        importSpecsFromCsv(file, specsInput); specsFileInput.value = "";
+    });
+
+    importOrdersBtn.addEventListener("click", ()=> ordersFileInput.click());
+    ordersFileInput.addEventListener("change", e=>{
+        const file = e.target.files[0]; if(!file) return;
+        importOrdersFromCsv(file, ordersInput); ordersFileInput.value = "";
+    });
+
+    downloadPdfBtn.addEventListener("click", ()=> buildManifestPdf(currentCrates, currentTrays));
+})();
+</script>
+
+
+</body>
+</html>
