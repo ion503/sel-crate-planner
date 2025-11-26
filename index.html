@@ -111,7 +111,6 @@ C,40</textarea>
     const FIXED_COLUMNS = 2;
     const FIXED_ROWS_PER_COL = 22;
 
-    // Nice distinct palette; extend if you expect many PCB types
     const PALETTE = [
         "#e0f5c5", "#cbe2ff", "#ffe0b3", "#ffcdd2", "#d1c4e9",
         "#b2dfdb", "#f8bbd0", "#c8e6c9", "#bbdefb", "#fff9c4",
@@ -379,7 +378,6 @@ C,40</textarea>
         doc.save("crate_manifest.pdf");
     }
 
-    // CSV importers
     function importSpecsFromCsv(file, textarea){
         const r = new FileReader();
         r.onload = e=>{
@@ -411,7 +409,6 @@ C,40</textarea>
         r.readAsText(file);
     }
 
-    // Wire up UI
     const specsInput = document.getElementById("specsInput");
     const ordersInput = document.getElementById("ordersInput");
     const trayEmptyLbsInput = document.getElementById("trayEmptyLbs");
@@ -467,5 +464,3 @@ C,40</textarea>
 
 </body>
 </html>
-
-
