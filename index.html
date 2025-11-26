@@ -40,7 +40,7 @@
             <h1>SEL Crate Planner</h1>
             <p>
                 This tool allocates PCB trays into <strong>crates</strong>.<br>
-                Crate capacity is fixed at <strong>2 columns × 24 rows = 48 trays</strong>.
+                Crate capacity is fixed at <strong>2 columns × 22 rows = 44 trays</strong>.
             </p>
         </div>
     </div>
@@ -107,9 +107,9 @@ C,40</textarea>
     let currentTrays = [];
     let currentColorMap = {};
 
-    const FIXED_SLOTS_PER_CRATE = 48;
+    const FIXED_SLOTS_PER_CRATE = 44;
     const FIXED_COLUMNS = 2;
-    const FIXED_ROWS_PER_COL = 24;
+    const FIXED_ROWS_PER_COL = 22;
 
     // Nice distinct palette; extend if you expect many PCB types
     const PALETTE = [
@@ -467,3 +467,4 @@ C,40</textarea>
 
 </body>
 </html>
+
